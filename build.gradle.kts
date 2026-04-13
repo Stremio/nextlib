@@ -7,7 +7,7 @@ subprojects {
     plugins.withId(rootProject.libs.plugins.mavenPublish.get().pluginId) {
         configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
             publishToMavenCentral()
-            signAllPublications()
+            // signAllPublications()
             coordinates(
                 groupId = "io.github.anilbeesetti",
                 artifactId = property("POM_ARTIFACT_ID") as String,
