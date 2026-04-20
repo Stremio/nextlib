@@ -2,7 +2,7 @@
 
 # Versions
 VPX_VERSION=1.13.0
-MBEDTLS_VERSION=3.4.1
+MBEDTLS_VERSION=3.6.6
 FFMPEG_VERSION=8.1
 
 # Directories
@@ -70,10 +70,10 @@ function downloadLibVpx() {
 function downloadMbedTLS() {
   pushd $SOURCES_DIR
   echo "Downloading mbedtls source code of version $MBEDTLS_VERSION..."
-  MBEDTLS_FILE=mbedtls-$MBEDTLS_VERSION.tar.gz
-  curl -L "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${MBEDTLS_VERSION}.tar.gz" -o $MBEDTLS_FILE
+  MBEDTLS_FILE=mbedtls-$MBEDTLS_VERSION.tar.bz2
+  curl -L "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/${MBEDTLS_FILE}" -o $MBEDTLS_FILE
   [ -e $MBEDTLS_FILE ] || { echo "$MBEDTLS_FILE does not exist. Exiting..."; exit 1; }
-  tar -zxf $MBEDTLS_FILE
+  tar -jxf $MBEDTLS_FILE
   rm $MBEDTLS_FILE
   popd
 }

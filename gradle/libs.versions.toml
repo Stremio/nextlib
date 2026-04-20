@@ -7,7 +7,7 @@ checkerQual = "3.54.0"
 googleErrorProne = "2.48.0"
 androidxAnnotation = "1.9.1"
 cmake = "3.22.1"
-ndk = "25.2.9519653"
+ndk = "29.0.14206865"
 mavenPublish = "0.36.0"
 
 [libraries]
