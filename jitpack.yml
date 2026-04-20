@@ -1,7 +1,19 @@
 jdk:
   - openjdk8
+env:
+  CMDLT: "14742923"
+  NDK: "29.0.14206865"
 before_install:
+  - wget https://dl.google.com/android/repository/commandlinetools-linux-${CMDLT}_latest.zip -O commandlinetools.zip
+  - unzip commandlinetools.zip -d $ANDROID_HOME/cmdline-tools
+  - mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+  - yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${NDK}"
   - yes | sdkmanager "cmake;3.22.1"
   - sdk install java 17.0.8-tem
   - sdk use java 17.0.8-tem
-  - ln -sf /usr/bin/python3 /usr/bin/python
+install:
+  - mkdir python_tmp
+  - wget https://github.com/kageiit/jitpack-python/releases/download/3.8/python-3.8-ubuntu-16.tar.gz -O python_tmp/python.tar.gz
+  - tar -C python_tmp -xf python_tmp/python.tar.gz
+  - export PATH="$PATH:python_tmp/bin"
+  - ./gradlew publishToMavenLocal
