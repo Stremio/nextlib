@@ -5,6 +5,12 @@ env:
   NDK: "29.0.14206865"
 
 before_install:
+  - wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O miniforge.sh
+  - bash miniforge.sh -b -p $HOME/miniforge
+  - export PATH="$HOME/miniforge/bin:$PATH"
+
+  - pip install meson ninja
+
   - wget https://pkgconfig.freedesktop.org/releases/pkg-config-0.29.2.tar.gz
   - tar xzf pkg-config-0.29.2.tar.gz
   - cd pkg-config-0.29.2 && ./configure --prefix=$HOME/local --with-internal-glib && make -j2 && make install && cd ..
@@ -19,8 +25,4 @@ before_install:
   - sdk use java 17.0.8-tem
 
 install:
-  - mkdir python_tmp
-  - wget https://github.com/kageiit/jitpack-python/releases/download/3.8/python-3.8-ubuntu-16.tar.gz -O python_tmp/python.tar.gz
-  - tar -C python_tmp -xf python_tmp/python.tar.gz
-  - export PATH="$PATH:python_tmp/bin"
   - ./gradlew publishToMavenLocal
