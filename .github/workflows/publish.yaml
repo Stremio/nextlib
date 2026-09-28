@@ -12,7 +12,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Get updated version name
         run: |
@@ -22,16 +22,26 @@ jobs:
           echo "VERSION_NAME=${VERSION}" >> $GITHUB_ENV
 
       - name: Set Up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
 
+      - name: Install Android CLI
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 https://dl.google.com/android/cli/latest/linux_x86_64/android -o "$HOME/.local/bin/android"
+          chmod +x "$HOME/.local/bin/android"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           validate-wrappers: true
           cache-cleanup: always
+
+      - name: Install dav1d build tools
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
 
       - name: Publish to Sonatype Repository
         run: ./gradlew publishToMavenCentral --no-configuration-cache
@@ -44,7 +54,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

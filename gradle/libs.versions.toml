@@ -1,21 +1,24 @@
 [versions]
 androidCompileSdk = "36"
-agp = "9.2.1"
-kotlin = "2.4.0"
-androidxMedia3 = "1.10.1"
-checkerQual = "3.54.0"
-googleErrorProne = "2.48.0"
-androidxAnnotation = "1.9.1"
+agp = "9.4.0"
+kotlin = "2.4.20"
+androidxMedia3 = "1.11.1"
+junit = "4.13.2"
+checkerQual = "4.2.3"
+googleErrorProne = "2.50.0"
+androidxAnnotation = "1.10.0"
 cmake = "3.22.1"
 ndk = "29.0.14206865"
 mavenPublish = "0.37.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version = "1.7.0" }
 kotlin-annotations-jvm = { group = "org.jetbrains.kotlin", name = "kotlin-annotations-jvm", version.ref = "kotlin" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidxMedia3" }
 checker-qual = { group = "org.checkerframework", name = "checker-qual", version.ref = "checkerQual" }
 google-errorprone-annotations = { group = "com.google.errorprone", name = "error_prone_annotations", version.ref = "googleErrorProne" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 androidLibrary = { id = "com.android.library", version.ref = "agp" }

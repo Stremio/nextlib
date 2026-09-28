@@ -44,14 +44,11 @@ static int read_rotation_degrees(AVStream *stream) {
         rotation = normalize_rotation(atoi(rotateTag->value));
     }
 
-    const AVPacketSideData *sideData = av_packet_side_data_get(
-        stream->codecpar->coded_side_data,
-        stream->codecpar->nb_coded_side_data,
-        AV_PKT_DATA_DISPLAYMATRIX
-    );
-
-    if (sideData) {
-        double theta = av_display_rotation_get((const int32_t *)(sideData->data));
+    const AVPacketSideData *displayMatrix = av_packet_side_data_get(
+            stream->codecpar->coded_side_data, stream->codecpar->nb_coded_side_data,
+            AV_PKT_DATA_DISPLAYMATRIX);
+    if (displayMatrix && displayMatrix->size >= 9 * sizeof(int32_t)) {
+        double theta = av_display_rotation_get(reinterpret_cast<const int32_t *>(displayMatrix->data));
         rotation = normalize_rotation(static_cast<int>(-theta));
     }
 

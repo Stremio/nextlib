@@ -1,8 +1,9 @@
 #!/bin/bash
+set -euo pipefail
 
 # Versions
-VPX_VERSION=1.13.0
-MBEDTLS_VERSION=3.6.6
+DAV1D_VERSION=1.5.4
+MBEDTLS_VERSION=3.6.7
 FFMPEG_VERSION=8.1
 
 # Directories
@@ -11,164 +12,126 @@ BUILD_DIR=$BASE_DIR/build
 OUTPUT_DIR=$BASE_DIR/output
 SOURCES_DIR=$BASE_DIR/sources
 FFMPEG_DIR=$SOURCES_DIR/ffmpeg-$FFMPEG_VERSION
-VPX_DIR=$SOURCES_DIR/libvpx-$VPX_VERSION
+DAV1D_DIR=$SOURCES_DIR/dav1d-$DAV1D_VERSION
 MBEDTLS_DIR=$SOURCES_DIR/mbedtls-$MBEDTLS_VERSION
 
 # Configuration
 ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
 ANDROID_PLATFORM=21
-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo libvpx_vp8 libvpx_vp9"
-JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.pysicalcpu || echo 4)
+ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9 libdav1d"
+JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
 
-# Set up host platform variables
-HOST_PLATFORM="linux-x86_64"
-case "$OSTYPE" in
-darwin*) HOST_PLATFORM="darwin-x86_64" ;;
-linux*) HOST_PLATFORM="linux-x86_64" ;;
-msys)
-  case "$(uname -m)" in
-  x86_64) HOST_PLATFORM="windows-x86_64" ;;
-  i686) HOST_PLATFORM="windows" ;;
-  esac
-  ;;
+# Gradle supplies these; standalone callers use the same pinned versions.
+CATALOG="$BASE_DIR/../gradle/libs.versions.toml"
+ANDROID_HOME=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
+: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK directory}"
+ANDROID_NDK_VERSION=${ANDROID_NDK_VERSION:-$(sed -n 's/^ndk = "\(.*\)"/\1/p' "$CATALOG")}
+ANDROID_CMAKE_VERSION=${ANDROID_CMAKE_VERSION:-$(sed -n 's/^cmake = "\(.*\)"/\1/p' "$CATALOG")}
+: "${ANDROID_NDK_VERSION:?Missing NDK version}"
+: "${ANDROID_CMAKE_VERSION:?Missing CMake version}"
+ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+CMAKE_EXECUTABLE="$ANDROID_HOME/cmake/$ANDROID_CMAKE_VERSION/bin/cmake"
+
+case "$(uname -s)" in
+  Darwin) HOST_PLATFORM=darwin-x86_64 ;;
+  Linux) HOST_PLATFORM=linux-x86_64 ;;
+  *) echo "Build FFmpeg on macOS or Linux (WSL on Windows)." >&2; exit 1 ;;
 esac
+TOOLCHAIN_PREFIX="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$HOST_PLATFORM"
 
-# Build tools
-TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
-CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/${ANDROID_CMAKE_VERSION}/bin/cmake"
-
-# Check if sdkmanager is in PATH
-if command -v sdkmanager &> /dev/null; then
-  # Use sdkmanager from PATH
-  echo "Using sdkmanager from PATH"
-  echo y | sdkmanager --sdk_root="${ANDROID_SDK_HOME}" "cmake;${ANDROID_CMAKE_VERSION}"
-else
-  # Use sdkmanager from Android SDK
-  SDKMANAGER_EXECUTABLE="${ANDROID_SDK_HOME}/cmdline-tools/latest/bin/sdkmanager"
-  if [[ -x "$SDKMANAGER_EXECUTABLE" ]]; then
-    echo "Using sdkmanager from Android SDK"
-    echo y | "$SDKMANAGER_EXECUTABLE" --sdk_root="${ANDROID_SDK_HOME}" "cmake;${ANDROID_CMAKE_VERSION}"
-  else
-    echo "Error: sdkmanager not found in PATH or Android SDK"
+PACKAGES=()
+[[ -x "$TOOLCHAIN_PREFIX/bin/clang" ]] || PACKAGES+=("ndk/$ANDROID_NDK_VERSION")
+[[ -x "$CMAKE_EXECUTABLE" ]] || PACKAGES+=("cmake/$ANDROID_CMAKE_VERSION")
+if (( ${#PACKAGES[@]} )); then
+  ANDROID_CLI=${ANDROID_CLI:-android}
+  command -v "$ANDROID_CLI" >/dev/null || {
+    echo "Install Android CLI from https://developer.android.com/tools/agents and add android to PATH (or set ANDROID_CLI)." >&2
     exit 1
-  fi
+  }
+  "$ANDROID_CLI" --sdk="$ANDROID_HOME" sdk install "${PACKAGES[@]}"
 fi
-
-mkdir -p $SOURCES_DIR
-
-function downloadLibVpx() {
-  pushd $SOURCES_DIR
-  echo "Downloading Vpx source code of version $VPX_VERSION..."
-  VPX_FILE=libvpx-$VPX_VERSION.tar.gz
-  curl -L "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz" -o $VPX_FILE
-  [ -e $VPX_FILE ] || { echo "$VPX_FILE does not exist. Exiting..."; exit 1; }
-  tar -zxf $VPX_FILE
-  rm $VPX_FILE
-  popd
+[[ -x "$TOOLCHAIN_PREFIX/bin/clang" && -x "$CMAKE_EXECUTABLE" ]] || {
+  echo "Android NDK or CMake installation is incomplete." >&2
+  exit 1
 }
+for tool in curl tar make pkg-config meson ninja nasm; do
+  command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
+done
 
-function downloadMbedTLS() {
-  pushd $SOURCES_DIR
-  echo "Downloading mbedtls source code of version $MBEDTLS_VERSION..."
-  MBEDTLS_FILE=mbedtls-$MBEDTLS_VERSION.tar.bz2
-  curl -L "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/${MBEDTLS_FILE}" -o $MBEDTLS_FILE
-  [ -e $MBEDTLS_FILE ] || { echo "$MBEDTLS_FILE does not exist. Exiting..."; exit 1; }
-  tar -jxf $MBEDTLS_FILE
-  rm $MBEDTLS_FILE
-  popd
-}
+mkdir -p "$SOURCES_DIR"
 
-function downloadFfmpeg() {
-  pushd $SOURCES_DIR
-  echo "Downloading FFmpeg source code of version $FFMPEG_VERSION..."
-  FFMPEG_FILE=ffmpeg-$FFMPEG_VERSION.tar.gz
-  curl -L "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" -o $FFMPEG_FILE
-  [ -e $FFMPEG_FILE ] || { echo "$FFMPEG_FILE does not exist. Exiting..."; exit 1; }
-  tar -zxf $FFMPEG_FILE
-  rm $FFMPEG_FILE
-  popd
-}
+# Publish a source directory only after a complete download and extraction.
+downloadSource() (
+  destination=$2
+  staging=$(mktemp -d "$SOURCES_DIR/.download.XXXXXX")
+  trap 'rm -rf "$staging"' EXIT
+  curl --fail --location --retry 3 "$1" -o "$staging/source.tar"
+  tar -xf "$staging/source.tar" -C "$staging"
+  mv "$staging/$(basename "$destination")" "$destination"
+)
 
-function buildLibVpx() {
-  pushd $VPX_DIR
-
-  VPX_AS=${TOOLCHAIN_PREFIX}/bin/llvm-as
+function buildDav1d() {
   for ABI in $ANDROID_ABIS; do
-    # Set up environment variables
     case $ABI in
-    armeabi-v7a)
-      EXTRA_BUILD_FLAGS="--force-target=armv7-android-gcc --disable-neon"
-      TOOLCHAIN=armv7a-linux-androideabi21-
-      ;;
-    arm64-v8a)
-      EXTRA_BUILD_FLAGS="--force-target=armv8-android-gcc"
-      TOOLCHAIN=aarch64-linux-android21-
-      ;;
-    x86)
-      EXTRA_BUILD_FLAGS="--force-target=x86-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic"
-      VPX_AS=${TOOLCHAIN_PREFIX}/bin/yasm
-      TOOLCHAIN=i686-linux-android21-
-      ;;
-    x86_64)
-      EXTRA_BUILD_FLAGS="--force-target=x86_64-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic --disable-neon --disable-neon-asm"
-      VPX_AS=${TOOLCHAIN_PREFIX}/bin/yasm
-      TOOLCHAIN=x86_64-linux-android21-
-      ;;
-    *)
-      echo "Unsupported architecture: $ABI"
-      exit 1
-      ;;
+      armeabi-v7a) DAV1D_CPU=arm; DAV1D_TOOLCHAIN=armv7a-linux-androideabi ;;
+      arm64-v8a) DAV1D_CPU=aarch64; DAV1D_TOOLCHAIN=aarch64-linux-android ;;
+      x86) DAV1D_CPU=x86; DAV1D_TOOLCHAIN=i686-linux-android ;;
+      x86_64) DAV1D_CPU=x86_64; DAV1D_TOOLCHAIN=x86_64-linux-android ;;
     esac
 
-    CC=${TOOLCHAIN_PREFIX}/bin/${TOOLCHAIN}clang \
-      CXX=${CC}++ \
-      LD=${CC} \
-      AR=${TOOLCHAIN_PREFIX}/bin/llvm-ar \
-      AS=${VPX_AS} \
-      STRIP=${TOOLCHAIN_PREFIX}/bin/llvm-strip \
-      NM=${TOOLCHAIN_PREFIX}/bin/llvm-nm \
-      LDFLAGS="-Wl,-z,max-page-size=16384" \
-      ./configure \
-      --prefix=$BUILD_DIR/external/$ABI \
-      --libc="${TOOLCHAIN_PREFIX}/sysroot" \
-      --enable-vp8 \
-      --enable-vp9 \
-      --enable-static \
-      --disable-shared \
-      --disable-examples \
-      --disable-docs \
-      --enable-realtime-only \
-      --enable-install-libs \
-      --enable-multithread \
-      --disable-webm-io \
-      --disable-libyuv \
-      --enable-better-hw-compatibility \
-      --disable-runtime-cpu-detect \
-      ${EXTRA_BUILD_FLAGS}
+    DAV1D_BUILD_DIR="$BUILD_DIR/dav1d/$ABI"
+    mkdir -p "$BUILD_DIR/dav1d"
+    DAV1D_CROSS_FILE="$BUILD_DIR/dav1d/$ABI.meson"
+    cat > "$DAV1D_CROSS_FILE" <<EOF
+[binaries]
+c = '$TOOLCHAIN_PREFIX/bin/$DAV1D_TOOLCHAIN$ANDROID_PLATFORM-clang'
+ar = '$TOOLCHAIN_PREFIX/bin/llvm-ar'
+strip = '$TOOLCHAIN_PREFIX/bin/llvm-strip'
 
-    make clean
-    make -j$JOBS
-    make install
+[properties]
+needs_exe_wrapper = true
+
+[host_machine]
+system = 'android'
+cpu_family = '$DAV1D_CPU'
+cpu = '$DAV1D_CPU'
+endian = 'little'
+EOF
+
+    # Reconfigure even after an interrupted build or a toolchain/version change.
+    rm -rf "$DAV1D_BUILD_DIR"
+    meson setup "$DAV1D_BUILD_DIR" "$DAV1D_DIR" \
+      --cross-file="$DAV1D_CROSS_FILE" \
+      --prefix="$BUILD_DIR/external/$ABI" --libdir=lib \
+      --buildtype=release --default-library=static \
+      -Db_staticpic=true -Denable_tools=false -Denable_tests=false
+    ninja -C "$DAV1D_BUILD_DIR" -j"$JOBS"
+    ninja -C "$DAV1D_BUILD_DIR" install
   done
-  popd
 }
 
 function buildMbedTLS() {
-    pushd $MBEDTLS_DIR
+    pushd "$MBEDTLS_DIR"
 
     for ABI in $ANDROID_ABIS; do
 
       CMAKE_BUILD_DIR=$MBEDTLS_DIR/mbedtls_build_${ABI}
-      rm -rf ${CMAKE_BUILD_DIR}
-      mkdir -p ${CMAKE_BUILD_DIR}
-      cd ${CMAKE_BUILD_DIR}
+      rm -rf "${CMAKE_BUILD_DIR}"
+      mkdir -p "${CMAKE_BUILD_DIR}"
+      cd "${CMAKE_BUILD_DIR}"
 
-      ${CMAKE_EXECUTABLE} .. \
+      "${CMAKE_EXECUTABLE}" .. \
        -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
        -DANDROID_ABI=$ABI \
-       -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
-       -DCMAKE_INSTALL_PREFIX=$BUILD_DIR/external/$ABI \
+       -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
+       -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/external/$ABI" \
+       -DCMAKE_INSTALL_LIBDIR=lib \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+       -DUSE_STATIC_MBEDTLS_LIBRARY=ON \
+       -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
+       -DENABLE_PROGRAMS=OFF \
        -DENABLE_TESTING=0
 
       make -j$JOBS
@@ -179,7 +142,7 @@ function buildMbedTLS() {
 }
 
 function buildFfmpeg() {
-  pushd $FFMPEG_DIR
+  pushd "$FFMPEG_DIR"
   EXTRA_BUILD_CONFIGURATION_FLAGS=""
   COMMON_OPTIONS=""
 
@@ -190,6 +153,7 @@ function buildFfmpeg() {
 
   # Build FFmpeg for each architecture and platform
   for ABI in $ANDROID_ABIS; do
+    EXTRA_BUILD_CONFIGURATION_FLAGS=""
 
     # Set up environment variables
     case $ABI in
@@ -220,14 +184,15 @@ function buildFfmpeg() {
       ;;
     esac
 
-    # Referencing dependencies without pkgconfig
+    # Restrict pkg-config to target libraries, never the host's installed dav1d.
     DEP_CFLAGS="-I$BUILD_DIR/external/$ABI/include"
     DEP_LD_FLAGS="-L$BUILD_DIR/external/$ABI/lib"
 
     # Configure FFmpeg build
-    ./configure \
-      --prefix=$BUILD_DIR/$ABI \
+    PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$BUILD_DIR/external/$ABI/lib/pkgconfig" ./configure \
+      --prefix="$BUILD_DIR/$ABI" \
       --enable-cross-compile \
+      --x86asmexe="$(command -v nasm)" \
       --arch=$ARCH \
       --cpu=$CPU \
       --cross-prefix="${TOOLCHAIN_PREFIX}/bin/$TOOLCHAIN" \
@@ -237,7 +202,8 @@ function buildFfmpeg() {
       --strip="${TOOLCHAIN_PREFIX}/bin/llvm-strip" \
       --extra-cflags="-O3 -fPIC $DEP_CFLAGS" \
       --extra-ldflags="$DEP_LD_FLAGS -Wl,-z,max-page-size=16384" \
-      --pkg-config="$(which pkg-config)" \
+      --pkg-config="$(command -v pkg-config)" \
+      --pkg-config-flags=--static \
       --target-os=android \
       --enable-shared \
       --disable-static \
@@ -253,7 +219,7 @@ function buildFfmpeg() {
       --enable-demuxers \
       --enable-swresample \
       --enable-avformat \
-      --enable-libvpx \
+      --enable-libdav1d \
       --enable-protocol=file,http,https,mmsh,mmst,pipe,rtmp,rtmps,rtmpt,rtmpts,rtp,tls \
       --enable-version3 \
       --enable-mbedtls \
@@ -280,24 +246,18 @@ function buildFfmpeg() {
   popd
 }
 
-if [[ ! -d "$OUTPUT_DIR" && ! -d "$BUILD_DIR" ]]; then
-  # Download MbedTLS source code if it doesn't exist
-  if [[ ! -d "$MBEDTLS_DIR" ]]; then
-    downloadMbedTLS
-  fi
-
-  # Download Vpx source code if it doesn't exist
-  if [[ ! -d "$VPX_DIR" ]]; then
-    downloadLibVpx
-  fi
-
-  # Download Ffmpeg source code if it doesn't exist
-  if [[ ! -d "$FFMPEG_DIR" ]]; then
-    downloadFfmpeg
-  fi
-
-  # Building library
-  buildMbedTLS
-  buildLibVpx
-  buildFfmpeg
+# Gradle owns up-to-date checks. Existing directories can be left by failed builds.
+if [[ ! -d "$MBEDTLS_DIR" ]]; then
+  # GitHub's generated source archives omit required submodules/generated files.
+  downloadSource "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/mbedtls-${MBEDTLS_VERSION}.tar.bz2" "$MBEDTLS_DIR"
 fi
+if [[ ! -d "$FFMPEG_DIR" ]]; then
+  downloadSource "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$FFMPEG_DIR"
+fi
+if [[ ! -d "$DAV1D_DIR" ]]; then
+  downloadSource "https://github.com/videolan/dav1d/archive/refs/tags/${DAV1D_VERSION}.tar.gz" "$DAV1D_DIR"
+fi
+
+buildMbedTLS
+buildDav1d
+buildFfmpeg

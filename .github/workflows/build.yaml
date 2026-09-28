@@ -14,24 +14,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set Up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
 
+      - name: Install Android CLI
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 3 https://dl.google.com/android/cli/latest/linux_x86_64/android -o "$HOME/.local/bin/android"
+          chmod +x "$HOME/.local/bin/android"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
+        uses: gradle/actions/setup-gradle@v6
         with:
           validate-wrappers: true
           gradle-home-cache-cleanup: true
 
+      - name: Install dav1d build tools
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
+
+      - name: Check FFmpeg setup
+        run: python3 ffmpeg/test_setup.py
+
       - name: Build Project with gradle
         run: ./gradlew assembleRelease
 
-      - uses: actions/upload-artifact@v6.0.0
+      - uses: actions/upload-artifact@v7.0.1
         with:
-          name: nextlib-release.aar
-          path: ./ffcodecs/build/outputs/aar/ffcodecs-release.aar
+          name: nextlib-release
+          if-no-files-found: error
+          path: |
+            media3ext/build/outputs/aar/media3ext-release.aar
+            mediainfo/build/outputs/aar/mediainfo-release.aar
