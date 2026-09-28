@@ -10,6 +10,8 @@ before_install:
   - export PATH="$HOME/miniforge/bin:$PATH"
 
   - pip install meson ninja
+  - conda install -y -c conda-forge nasm
+  - meson --version && ninja --version && nasm -v
 
   - wget https://pkgconfig.freedesktop.org/releases/pkg-config-0.29.2.tar.gz
   - tar xzf pkg-config-0.29.2.tar.gz
